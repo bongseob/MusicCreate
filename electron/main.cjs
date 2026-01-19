@@ -58,13 +58,14 @@ app.whenReady().then(() => {
             const apiKey = process.env.SUNO_API_KEY || store.get('sunoApiKey');
             if (!apiKey) throw new Error('API Key is missing. Please add SUNO_API_KEY to your .env file.');
 
-            const response = await axios.post('https://api.sunoapi.org/api/v1/suno/generate', {
+            const response = await axios.post('https://api.sunoapi.org/api/v1/generate', {
                 prompt,
                 customMode: customMode || false,
                 instrumental: instrumental || false,
                 style: style || '',
                 title: title || '',
-                model: 'V4'
+                model: 'V4',
+                callBackUrl: 'https://pqqpxm.link/suno-callback' // Placeholder required by some API versions
             }, {
                 headers: {
                     'Authorization': `Bearer ${apiKey}`,
@@ -72,6 +73,7 @@ app.whenReady().then(() => {
                 }
             });
 
+            console.log('[Suno API] Generate Response:', JSON.stringify(response.data, null, 2));
             return { success: true, data: response.data };
         } catch (error) {
             console.error('Suno Generate Error:', error.response?.data || error.message);
@@ -84,7 +86,7 @@ app.whenReady().then(() => {
             const apiKey = process.env.SUNO_API_KEY || store.get('sunoApiKey');
             if (!apiKey) throw new Error('API Key is missing');
 
-            const response = await axios.get(`https://api.sunoapi.org/api/v1/suno/task/${taskId}`, {
+            const response = await axios.get(`https://api.sunoapi.org/api/v1/generate/record-info?taskId=${taskId}`, {
                 headers: {
                     'Authorization': `Bearer ${apiKey}`
                 }

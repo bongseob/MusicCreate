@@ -63,8 +63,23 @@ function App() {
         instrumental: false
       })
 
-      if (result.success && result.data.data) {
-        const taskId = result.data.data // taskId is returned directly as a string or in result.data.data based on docs
+      console.log('[App] Generate Result:', result)
+      if (result.success && result.data) {
+        // sunoapi.org returns { code: 200, data: { taskId: "..." } }
+        let taskId = ''
+        if (result.data.data && typeof result.data.data.taskId === 'string') {
+          taskId = result.data.data.taskId
+        } else if (typeof result.data.data === 'string') {
+          taskId = result.data.data
+        }
+
+        console.log('[App] Extracted Task ID:', taskId)
+
+        if (!taskId) {
+          console.error('[App] Invalid Task ID format', result.data)
+          return
+        }
+
         const tempTracks = [{
           id: taskId,
           title: 'Generating...',
