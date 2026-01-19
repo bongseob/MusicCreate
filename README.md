@@ -71,3 +71,36 @@ export default defineConfig([
   },
 ])
 ```
+
+## 다른 곳에서 작업 하기
+
+1. 소스 코드 내려받기 (Clone)
+새 PC의 원하는 폴더에서 터미널(CMD 또는 PowerShell)을 열고 아래 명령어를 입력합니다.
+
+powershell
+git clone https://github.com/bongseob/MusicCreate.git
+cd MusicCreate
+2. 필수 소프트웨어 설치
+Node.js: 공식 사이트에서 LTS 버전을 설치합니다.
+Python (3.12 이상 추천): 공식 사이트에서 설치합니다.
+중요: 설치 시 "Add Python to PATH" 옵션을 반드시 체크해 주세요.
+3. 의존성 패키지 설치
+프로젝트 폴더 안에서 아래 명령어들을 실행하여 필요한 도구들을 설치합니다.
+
+Node.js 패키지 설치:
+
+powershell
+npm install
+Python AI 엔진 패키지 설치 (중요):
+
+powershell
+pip install --user demucs soundfile av torchcodec
+4. 환경 설정 (.env)
+보안상 .env 파일은 GitHub에 올라가지 않습니다. 기존 PC의 프로젝트 폴더에 있는 .env 파일을 복사해서 새 PC의 프로젝트 루트 폴더에 넣어주세요.
+
+내용 예시: SUNO_API_KEY=여러분의_키_값
+5. 프로그램 실행
+모든 준비가 끝났습니다. 아래 명령어로 프로그램을 실행합니다.
+
+powershell
+npm run electron-dev
