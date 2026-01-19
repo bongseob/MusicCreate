@@ -72,6 +72,10 @@ export default defineConfig([
 ])
 ```
 
+## 실행 화면
+<img width="1183" height="907" alt="image" src="https://github.com/user-attachments/assets/2af70d28-13d9-401f-9f99-55754da61501" />
+
+
 ## 다른 곳에서 작업 하기
 
 1. 소스 코드 내려받기 (Clone)
