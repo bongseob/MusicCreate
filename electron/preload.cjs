@@ -3,7 +3,12 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electron', {
     send: (channel, data) => {
-        let validChannels = ['toMain', 'ondragstart'];
+        const validChannels = [
+            'suno:login-success',
+            'suno:login-error',
+            'suno:check-auth-reply',
+            'suno:separate-progress'
+        ];
         if (validChannels.includes(channel)) {
             ipcRenderer.send(channel, data);
         }
@@ -22,10 +27,18 @@ contextBridge.exposeInMainWorld('electron', {
             'suno:status',
             'suno:check-auth',
             'dialog:open-directory',
-            'suno:download'
+            'dialog:open-audio',
+            'suno:download',
+            'suno:separate'
         ];
         if (validChannels.includes(channel)) {
             return ipcRenderer.invoke(channel, ...args);
+        }
+    },
+    on: (channel, func) => {
+        const validChannels = ['suno:separate-progress'];
+        if (validChannels.includes(channel)) {
+            ipcRenderer.on(channel, (event, ...args) => func(event, ...args));
         }
     }
 });

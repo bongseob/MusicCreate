@@ -98,6 +98,16 @@ app.whenReady().then(() => {
         }
     });
 
+    ipcMain.handle('dialog:open-audio', async () => {
+        const { filePaths } = await dialog.showOpenDialog({
+            properties: ['openFile'],
+            filters: [
+                { name: 'Audio Files', extensions: ['mp3', 'wav', 'flac', 'm4a', 'ogg'] }
+            ]
+        });
+        return filePaths[0];
+    });
+
     ipcMain.handle('dialog:open-directory', async () => {
         const { canceled, filePaths } = await dialog.showOpenDialog({
             properties: ['openDirectory']
@@ -159,6 +169,76 @@ app.whenReady().then(() => {
             console.error('Download/Convert Error:', error);
             return { success: false, error: error.message };
         }
+    });
+
+    ipcMain.handle('suno:separate', async (event, { filePath, trackId }) => {
+        return new Promise((resolve, reject) => {
+            if (!filePath || !fs.existsSync(filePath)) {
+                return resolve({ success: false, error: 'Source file not found' });
+            }
+
+            const fileName = path.basename(filePath, path.extname(filePath));
+            const outputBaseDir = path.join(path.dirname(filePath), 'stems_' + fileName);
+
+            if (!fs.existsSync(outputBaseDir)) {
+                fs.mkdirSync(outputBaseDir, { recursive: true });
+            }
+
+            // Path to demucs (running via python module is safest)
+            const pythonPath = 'python';
+            // Default separates into 4 stems: vocals, drums, bass, other
+            const args = ['-m', 'demucs.separate', '--mp3', '-o', outputBaseDir, filePath];
+
+            console.log(`[Main] Starting 4-Stem Separation for track ${trackId}: ${filePath}`);
+            const { spawn } = require('child_process');
+
+            // Critical: Add directories of ffmpeg-static and ffprobe-static to the PATH
+            const ffmpegPath = require('ffmpeg-static');
+            const ffprobePath = require('ffprobe-static').path;
+            const ffmpegDir = path.dirname(ffmpegPath);
+            const ffprobeDir = path.dirname(ffprobePath);
+
+            // Create a clean env object that works on Windows
+            const env = { ...process.env };
+            const newPath = `${ffmpegDir}${path.delimiter}${ffprobeDir}${path.delimiter}${process.env.PATH || process.env.Path || ''}`;
+            env.PATH = newPath;
+            env.Path = newPath;
+            env.FFMPEG_BINARY = ffmpegPath;
+
+            // Force torchaudio to use 'av' backend (PyAV) which is very stable on Windows
+            env.TORCHAUDIO_BACKEND = 'av';
+            env.PYTHONIOENCODING = 'utf-8';
+
+            console.log(`[Main] Starting Demucs with TORCHAUDIO_BACKEND=av and UTF-8 encoding`);
+            const demucsProcess = spawn(pythonPath, args, { env });
+
+            demucsProcess.stdout.on('data', (data) => {
+                const msg = data.toString();
+                event.sender.send('suno:separate-progress', { trackId, msg });
+            });
+
+            demucsProcess.stderr.on('data', (data) => {
+                const msg = data.toString();
+                event.sender.send('suno:separate-progress', { trackId, msg });
+            });
+
+            demucsProcess.on('close', (code) => {
+                if (code === 0) {
+                    const modelName = 'htdemucs';
+                    const demucsOutputDir = path.join(outputBaseDir, modelName, fileName);
+
+                    if (fs.existsSync(demucsOutputDir)) {
+                        const files = fs.readdirSync(demucsOutputDir);
+                        const resultPaths = files.map(f => path.join(demucsOutputDir, f));
+                        resolve({ success: true, stems: resultPaths, folder: demucsOutputDir });
+                    } else {
+                        resolve({ success: false, error: 'Output folder not found after processing' });
+                    }
+                } else {
+                    resolve({ success: false, error: `Demucs process exited with code ${code}` });
+                }
+            });
+        });
     });
 
     ipcMain.on('ondragstart', (event, filePath) => {

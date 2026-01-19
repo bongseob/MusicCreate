@@ -8,6 +8,7 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [tracks, setTracks] = useState<any[]>([])
   const [projectPath, setProjectPath] = useState<string>('')
+  const [separateLogs, setSeparateLogs] = useState<{ [key: string]: string[] }>({})
 
   const [isEnvLoaded, setIsEnvLoaded] = useState(false)
 
@@ -39,6 +40,18 @@ function App() {
       }
     }
     initAuth()
+
+    // Listen for separation progress
+    // @ts-ignore
+    if (window.electron && window.electron.on) {
+      // @ts-ignore
+      window.electron.on('suno:separate-progress', (event, { trackId, msg }) => {
+        setSeparateLogs(prev => ({
+          ...prev,
+          [trackId]: [...(prev[trackId] || []), msg]
+        }))
+      })
+    }
   }, [])
 
   const handleSaveApiKey = async (val: string) => {
@@ -134,6 +147,22 @@ function App() {
     }, 5000)
   }
 
+  const handleSelectExternalFile = async () => {
+    // @ts-ignore
+    const filePath = await window.electron.invoke('dialog:open-audio')
+    if (filePath) {
+      const fileName = filePath.split(/[\\/]/).pop()
+      const newTrack = {
+        id: `ext-${Date.now()}`,
+        title: fileName,
+        status: 'external',
+        localPath: filePath,
+        isExternal: true
+      }
+      setTracks(prev => [newTrack, ...prev])
+    }
+  }
+
   const handleSelectProject = async () => {
     // @ts-ignore
     const path = await window.electron.invoke('dialog:open-directory')
@@ -168,6 +197,43 @@ function App() {
       console.error('Download failed:', error)
     } finally {
       setTracks(prev => prev.map(t => t.id === track.id ? { ...t, isDownloading: false } : t))
+    }
+  }
+
+  const handleSeparate = async (track: any) => {
+    if (!track.localPath) {
+      alert('Please download the WAV file first.')
+      return
+    }
+
+    setTracks(prev => prev.map(t => t.id === track.id ? { ...t, isSeparating: true } : t))
+    setSeparateLogs(prev => ({ ...prev, [track.id]: ['Starting AI Stem Separation...'] }))
+
+    try {
+      // @ts-ignore
+      const result = await window.electron.invoke('suno:separate', {
+        filePath: track.localPath,
+        trackId: track.id
+      })
+
+      if (result.success) {
+        setTracks(prev => prev.map(t => t.id === track.id ? {
+          ...t,
+          stems: result.stems,
+          stemFolder: result.folder
+        } : t))
+        setSeparateLogs(prev => ({ ...prev, [track.id]: [...(prev[track.id] || []), '✅ Stem separation complete!'] }))
+      } else {
+        const errorMsg = `❌ Separation failed: ${result.error}`
+        setSeparateLogs(prev => ({ ...prev, [track.id]: [...(prev[track.id] || []), errorMsg] }))
+        alert(errorMsg)
+      }
+    } catch (error: any) {
+      const errorMsg = `❌ Error: ${error.message || 'Unknown error occurred'}`
+      setSeparateLogs(prev => ({ ...prev, [track.id]: [...(prev[track.id] || []), errorMsg] }))
+      console.error('Separation failed:', error)
+    } finally {
+      setTracks(prev => prev.map(t => t.id === track.id ? { ...t, isSeparating: false } : t))
     }
   }
 
@@ -267,48 +333,99 @@ function App() {
                 </div>
               ) : (
                 tracks.map(track => (
-                  <div
-                    key={track.id}
-                    draggable={!!track.localPath}
-                    onDragStart={(e) => handleDragStart(e, track)}
-                    className={`p-4 bg-surface/40 backdrop-blur-md border border-white/5 rounded-xl flex items-center gap-4 group hover:border-accent/40 hover:bg-surface/60 transition-all cursor-is-allowed ${track.localPath ? 'cursor-grab active:cursor-grabbing' : ''}`}
-                  >
-                    <div className="w-16 h-16 bg-background rounded-lg overflow-hidden flex-shrink-0 border border-white/5 shadow-inner">
-                      {track.imageUrl ? <img src={track.imageUrl} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-accent/5 flex items-center justify-center text-accent/50 text-xl font-bold">M</div>}
-                    </div>
-                    <div className="flex-grow min-w-0">
-                      <h3 className="font-semibold text-sm truncate group-hover:text-accent transition-colors">{track.title || 'Untitled Composition'}</h3>
-                      <div className="flex items-center gap-2 mt-1.5">
-                        <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${track.status === 'complete'
-                          ? (track.localPath ? 'bg-accent/20 text-accent border border-accent/20' : 'bg-green-500/10 text-green-400 border border-green-500/10')
-                          : 'bg-blue-500/10 text-blue-400 border border-blue-500/10 animate-pulse'
-                          }`}>
-                          {track.localPath ? 'READY TO DRAG' : track.status}
-                        </span>
-                        <span className="text-[10px] text-text-secondary font-mono opacity-50 truncate">ID: {track.id.split('-')[0]}...</span>
+                  <div key={track.id} className="space-y-2">
+                    <div
+                      draggable={!!track.localPath}
+                      onDragStart={(e) => handleDragStart(e, track)}
+                      className={`p-4 bg-surface/40 backdrop-blur-md border border-white/5 rounded-xl flex items-center gap-4 group hover:border-accent/40 hover:bg-surface/60 transition-all cursor-is-allowed ${track.localPath ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                    >
+                      <div className="w-16 h-16 bg-background rounded-lg overflow-hidden flex-shrink-0 border border-white/5 shadow-inner">
+                        {track.imageUrl ? <img src={track.imageUrl} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-accent/5 flex items-center justify-center text-accent/50 text-xl font-bold">M</div>}
+                      </div>
+                      <div className="flex-grow min-w-0">
+                        <h3 className="font-semibold text-sm truncate group-hover:text-accent transition-colors">{track.title || 'Untitled Composition'}</h3>
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${track.status === 'complete' || track.status === 'external'
+                            ? (track.localPath ? 'bg-accent/20 text-accent border border-accent/20' : 'bg-green-500/10 text-green-400 border border-green-500/10')
+                            : 'bg-blue-500/10 text-blue-400 border border-blue-500/10 animate-pulse'
+                            }`}>
+                            {track.localPath ? (track.isExternal ? 'LOCAL READY' : 'READY TO DRAG') : track.status}
+                          </span>
+                          <span className="text-[10px] text-text-secondary font-mono opacity-50 truncate">
+                            {track.isExternal ? 'External File' : `ID: ${track.id.split('-')[0]}...`}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex-shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {(track.status === 'complete' || track.status === 'external') && (
+                          <div className="flex gap-2">
+                            {!track.localPath ? (
+                              <button
+                                onClick={() => handleDownload(track)}
+                                disabled={track.isDownloading}
+                                className="px-3 py-1.5 bg-accent text-white rounded-lg hover:bg-accent-hover transition-colors text-xs font-medium disabled:opacity-50"
+                              >
+                                {track.isDownloading ? '...' : 'Download WAV'}
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => handleSeparate(track)}
+                                  disabled={track.isSeparating}
+                                  className="px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-xs font-medium disabled:opacity-50 flex items-center gap-1"
+                                >
+                                  <span>✨</span> {track.isSeparating ? '...' : 'Stems'}
+                                </button>
+                                <div className="p-2 text-accent/40 cursor-grab" title="Drag me!">
+                                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8h16M4 16h16"></path></svg>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
-                    <div className="flex-shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {track.status === 'complete' && !track.localPath && (
+
+                    {separateLogs[track.id] && (
+                      <div className="mx-4 mb-3 p-3 bg-black/40 rounded-lg border border-white/5 font-mono text-[10px] text-purple-300 max-h-48 overflow-y-auto shadow-inner relative group/logs">
                         <button
-                          onClick={() => handleDownload(track)}
-                          disabled={track.isDownloading}
-                          className={`p-2 hidden group-hover:block hover:bg-accent/10 text-accent rounded-lg transition-colors ${track.isDownloading ? 'animate-pulse' : ''}`}
-                          title="Download as WAV to Cubase"
+                          onClick={() => setSeparateLogs(prev => {
+                            const next = { ...prev }
+                            delete next[track.id]
+                            return next
+                          })}
+                          className="absolute top-2 right-2 text-[8px] bg-white/10 px-1.5 py-0.5 rounded opacity-0 group-hover/logs:opacity-100 transition-opacity hover:bg-white/20 text-white"
                         >
-                          {track.isDownloading ? (
-                            <span className="w-5 h-5 block border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
-                          ) : (
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a2 2 0 002 2h12 a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                          )}
+                          CLOSE LOGS
                         </button>
-                      )}
-                      {track.localPath && (
-                        <div className="p-2 text-accent/40 cursor-grab" title="Drag this track into Cubase!">
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8h16M4 16h16"></path></svg>
-                        </div>
-                      )}
-                    </div>
+                        {separateLogs[track.id].map((log, i) => (
+                          <div key={i} className="whitespace-pre-wrap break-all text-purple-400/80 mb-0.5">{log}</div>
+                        ))}
+                      </div>
+                    )}
+
+                    {track.stems && (
+                      <div className="mx-4 grid grid-cols-2 gap-2 pb-2">
+                        {track.stems.map((stemPath: string, i: number) => {
+                          const stemName = stemPath.split(/[\\/]/).pop()
+                          return (
+                            <div
+                              key={i}
+                              draggable
+                              onDragStart={(e) => {
+                                e.preventDefault()
+                                // @ts-ignore
+                                window.electron.send('ondragstart', stemPath)
+                              }}
+                              className="p-2 bg-white/5 border border-white/10 rounded-md text-[10px] flex justify-between items-center group cursor-move hover:bg-white/10 hover:border-purple-500/30 transition-all shadow-sm"
+                            >
+                              <span className="truncate flex-1 text-purple-200/70 group-hover:text-purple-100">{stemName}</span>
+                              <span className="text-[8px] bg-purple-500/20 text-purple-400 px-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">DRAG</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 ))
               )}
@@ -333,6 +450,21 @@ function App() {
               >
                 {projectPath ? 'Change Project' : 'Link Cubase Project'}
               </button>
+            </div>
+          </div>
+
+          <div className="card">
+            <h2 className="text-lg font-semibold mb-4">AI Tools</h2>
+            <div className="space-y-4">
+              <button
+                onClick={handleSelectExternalFile}
+                className="w-full py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg text-sm font-bold hover:shadow-lg hover:shadow-purple-500/20 transition-all flex items-center justify-center gap-2"
+              >
+                <span>📂</span> Load Local File for Stems
+              </button>
+              <p className="text-[10px] text-text-secondary text-center px-2">
+                Suno 생성 곡이 아닌 본인의 WAV/MP3 파일을 불러와 보컬/악기로 분리할 수 있습니다.
+              </p>
             </div>
           </div>
 
