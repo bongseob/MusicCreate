@@ -4,6 +4,8 @@ function App() {
   console.log('[App] Component rendering...')
   const [prompt, setPrompt] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [sunoCookie, setSunoCookie] = useState('')
+  const [authMode, setAuthMode] = useState<'api_key' | 'cookie'>('api_key')
   const [isApiKeyVisible, setIsApiKeyVisible] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [tracks, setTracks] = useState<any[]>([])
@@ -11,6 +13,7 @@ function App() {
   const [separateLogs, setSeparateLogs] = useState<{ [key: string]: string[] }>({})
 
   const [isEnvLoaded, setIsEnvLoaded] = useState(false)
+  const [showCookieGuide, setShowCookieGuide] = useState(false)
 
   // Load API Key and Check Auth on mount
   useEffect(() => {
@@ -29,11 +32,17 @@ function App() {
             setApiKey('****************')
           } else {
             console.log('[Frontend] ENV key NOT detected, checking store')
-            // Only use saved key if env key is NOT present
             // @ts-ignore
             const savedKey = await window.electron.invoke('store:get', 'sunoApiKey')
             if (savedKey) setApiKey(savedKey)
           }
+          // Load saved auth mode and cookie
+          // @ts-ignore
+          const savedAuthMode = await window.electron.invoke('store:get', 'authMode')
+          if (savedAuthMode) setAuthMode(savedAuthMode)
+          // @ts-ignore
+          const savedCookie = await window.electron.invoke('store:get', 'sunoCookie')
+          if (savedCookie) setSunoCookie(savedCookie)
         } catch (err) {
           console.error('Auth init failed:', err)
         }
@@ -60,9 +69,25 @@ function App() {
     await window.electron.invoke('store:set', 'sunoApiKey', val)
   }
 
+  const handleSaveCookie = async (val: string) => {
+    setSunoCookie(val)
+    // @ts-ignore
+    await window.electron.invoke('store:set', 'sunoCookie', val)
+  }
+
+  const handleAuthModeChange = async (mode: 'api_key' | 'cookie') => {
+    setAuthMode(mode)
+    // @ts-ignore
+    await window.electron.invoke('store:set', 'authMode', mode)
+  }
+
   const handleGenerate = async () => {
-    if (!apiKey.trim()) {
+    if (authMode === 'api_key' && !apiKey.trim()) {
       alert('Please enter your sunoapi.org API Key first.')
+      return
+    }
+    if (authMode === 'cookie' && !sunoCookie.trim()) {
+      alert('Please enter your Suno browser cookie first.')
       return
     }
     if (!prompt.trim()) return
@@ -73,7 +98,9 @@ function App() {
       const result = await window.electron.invoke('suno:generate', {
         prompt,
         customMode: false,
-        instrumental: false
+        instrumental: false,
+        authMode,
+        sunoCookie
       })
 
       console.log('[App] Generate Result:', result)
@@ -101,7 +128,7 @@ function App() {
           imageUrl: null
         }]
         setTracks(prev => [...tempTracks, ...prev])
-        startPolling(taskId)
+        startPolling(taskId, authMode)
       } else {
         alert(`Generation failed: ${result.error}`)
       }
@@ -112,22 +139,31 @@ function App() {
     }
   }
 
-  const startPolling = (taskId: string) => {
+  const startPolling = (taskId: string, pollingAuthMode?: 'api_key' | 'cookie') => {
+    const currentAuthMode = pollingAuthMode || authMode
     const interval = setInterval(async () => {
       try {
         // @ts-ignore
-        const result = await window.electron.invoke('suno:status', { taskId })
+        const result = await window.electron.invoke('suno:status', { taskId, authMode: currentAuthMode })
         if (result.success && result.data.data) {
           const task = result.data.data
 
           setTracks(prev => prev.map(track => {
             if (track.id === taskId) {
-              // sunoapi.org task status: queued, processing, complete, failed
-              // multiple clips are returned in task.clips
-              const clip = task.clips?.[0] // UI shows first clip for now
+              // Handle both API Key and Cookie response formats
+              let clip, status
+              if (currentAuthMode === 'cookie') {
+                // Cookie mode: response already transformed in backend
+                clip = task.response?.sunoData?.[0]
+                status = task.status === 'SUCCESS' ? 'complete' : (task.status === 'PENDING' ? 'processing' : task.status?.toLowerCase())
+              } else {
+                // API Key mode: original format
+                clip = task.clips?.[0]
+                status = task.status
+              }
               return {
                 ...track,
-                status: task.status,
+                status: status,
                 audioUrl: clip?.audio_url,
                 imageUrl: clip?.image_url,
                 title: clip?.title || track.title
@@ -136,7 +172,9 @@ function App() {
             return track
           }))
 
-          if (task.status === 'complete' || task.status === 'failed') {
+          // Check completion for both modes
+          const isComplete = task.status === 'complete' || task.status === 'SUCCESS' || task.status === 'failed' || task.status === 'FAILED'
+          if (isComplete) {
             clearInterval(interval)
           }
         }
@@ -267,30 +305,91 @@ function App() {
         </div>
         <div className="flex items-center gap-4">
           <div className="relative flex flex-col items-end">
-            <label className="text-[10px] text-text-secondary mb-1">sunoapi.org API Key</label>
-            <div className="flex gap-2">
-              <input
-                type={isApiKeyVisible ? 'text' : 'password'}
-                value={apiKey}
-                onChange={(e) => handleSaveApiKey(e.target.value)}
-                placeholder="Paste API Key here..."
-                className="bg-surface/50 border border-border rounded-md px-3 py-1.5 text-xs w-64 focus:ring-1 focus:ring-accent outline-none"
-              />
-              <button
-                onClick={() => setIsApiKeyVisible(!isApiKeyVisible)}
-                className="p-1.5 bg-surface border border-border rounded-md hover:bg-border transition-colors"
+            {/* Auth Mode Selector */}
+            <div className="flex items-center gap-2 mb-2">
+              <label className="text-[10px] text-text-secondary">인증 방식:</label>
+              <select
+                value={authMode}
+                onChange={(e) => handleAuthModeChange(e.target.value as 'api_key' | 'cookie')}
+                className="bg-surface/50 border border-border rounded-md px-2 py-1 text-xs focus:ring-1 focus:ring-accent outline-none cursor-pointer"
               >
-                {isApiKeyVisible ? '👁️' : '🙈'}
-              </button>
+                <option value="api_key">🔑 API Key (유료)</option>
+                <option value="cookie">🎫 JWT Token (무료)</option>
+              </select>
             </div>
-            {isEnvLoaded && (
-              <span className="text-[9px] text-green-400 mt-0.5 animate-pulse">✓ API Key loaded from .env</span>
+
+            {/* Conditional Input Fields */}
+            {authMode === 'api_key' ? (
+              <div className="flex flex-col items-end">
+                <label className="text-[10px] text-text-secondary mb-1">sunoapi.org API Key</label>
+                <div className="flex gap-2">
+                  <input
+                    type={isApiKeyVisible ? 'text' : 'password'}
+                    value={apiKey}
+                    onChange={(e) => handleSaveApiKey(e.target.value)}
+                    placeholder="Paste API Key here..."
+                    className="bg-surface/50 border border-border rounded-md px-3 py-1.5 text-xs w-64 focus:ring-1 focus:ring-accent outline-none"
+                  />
+                  <button
+                    onClick={() => setIsApiKeyVisible(!isApiKeyVisible)}
+                    className="p-1.5 bg-surface border border-border rounded-md hover:bg-border transition-colors"
+                  >
+                    {isApiKeyVisible ? '👁️' : '🙈'}
+                  </button>
+                </div>
+                {isEnvLoaded && (
+                  <span className="text-[9px] text-green-400 mt-0.5 animate-pulse">✓ API Key loaded from .env</span>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-col items-end">
+                <div className="flex items-center gap-2 mb-1">
+                  <label className="text-[10px] text-text-secondary">Suno JWT Token</label>
+                  <button
+                    onClick={() => setShowCookieGuide(!showCookieGuide)}
+                    className="text-[9px] text-accent hover:underline"
+                  >
+                    {showCookieGuide ? '가이드 닫기' : '추출 방법?'}
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type={isApiKeyVisible ? 'text' : 'password'}
+                    value={sunoCookie}
+                    onChange={(e) => handleSaveCookie(e.target.value)}
+                    placeholder="Paste JWT Token here..."
+                    className="bg-surface/50 border border-border rounded-md px-3 py-1.5 text-xs w-64 focus:ring-1 focus:ring-accent outline-none"
+                  />
+                  <button
+                    onClick={() => setIsApiKeyVisible(!isApiKeyVisible)}
+                    className="p-1.5 bg-surface border border-border rounded-md hover:bg-border transition-colors"
+                  >
+                    {isApiKeyVisible ? '👁️' : '🙈'}
+                  </button>
+                </div>
+                {showCookieGuide && (
+                  <div className="absolute top-full right-0 mt-2 p-3 bg-surface border border-border rounded-lg shadow-xl z-50 w-80 text-left">
+                    <p className="text-[10px] text-text-secondary mb-2 font-bold">🎫 JWT 토큰 추출 방법:</p>
+                    <ol className="text-[9px] text-text-secondary space-y-1 list-decimal list-inside">
+                      <li>브라우저에서 <a href="https://suno.com" target="_blank" className="text-accent hover:underline">suno.com</a> 로그인</li>
+                      <li><kbd className="bg-background px-1 rounded">F12</kbd> 키로 개발자 도구 열기</li>
+                      <li><strong>Network</strong> 탭 선택 후 페이지 새로고침</li>
+                      <li><code className="bg-background px-1 rounded text-[8px]">client?_clerk</code> 요청 클릭</li>
+                      <li><strong>Response</strong> 탭에서 <code className="bg-background px-1 rounded text-[8px]">jwt</code> 값 복사</li>
+                    </ol>
+                    <p className="text-[8px] text-orange-400 mt-2">⚠️ 토큰은 약 1시간 후 만료됩니다</p>
+                  </div>
+                )}
+                {sunoCookie && (
+                  <span className="text-[9px] text-green-400 mt-0.5">✓ JWT Token saved</span>
+                )}
+              </div>
             )}
           </div>
           <div
-            className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold transition-all ${apiKey ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-gradient-to-br from-blue-500 to-purple-600'}`}
+            className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold transition-all ${(authMode === 'api_key' ? apiKey : sunoCookie) ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-gradient-to-br from-blue-500 to-purple-600'}`}
           >
-            {apiKey ? '✓' : 'JD'}
+            {(authMode === 'api_key' ? apiKey : sunoCookie) ? '✓' : 'JD'}
           </div>
         </div>
       </header>

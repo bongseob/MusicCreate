@@ -53,46 +53,152 @@ app.whenReady().then(() => {
     ipcMain.handle('store:get', (event, key) => store.get(key));
     ipcMain.handle('store:set', (event, key, value) => store.set(key, value));
 
-    ipcMain.handle('suno:generate', async (event, { prompt, customMode, instrumental, style, title }) => {
+    ipcMain.handle('suno:generate', async (event, { prompt, customMode, instrumental, style, title, authMode, sunoCookie }) => {
         try {
-            const apiKey = process.env.SUNO_API_KEY || store.get('sunoApiKey');
-            if (!apiKey) throw new Error('API Key is missing. Please add SUNO_API_KEY to your .env file.');
+            // Dual Authentication Mode
+            if (authMode === 'cookie') {
+                // JWT Token-based authentication: Direct Suno API
+                // The "cookie" field actually stores the JWT token from the Clerk response
+                let token = sunoCookie || store.get('sunoCookie');
+                if (!token) throw new Error('Suno Token is missing. Please enter your JWT token.');
 
-            const response = await axios.post('https://api.sunoapi.org/api/v1/generate', {
-                prompt,
-                customMode: customMode || false,
-                instrumental: instrumental || false,
-                style: style || '',
-                title: title || '',
-                model: 'V4',
-                callBackUrl: 'https://pqqpxm.link/suno-callback' // Placeholder required by some API versions
-            }, {
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json'
+                // Clean the token - remove any whitespace/newlines
+                token = token.trim().replace(/[\r\n]/g, '');
+
+                console.log('[Suno] Using JWT Token authentication mode');
+                const { v4: uuidv4 } = require('uuid');
+                const response = await axios.post('https://studio-api.prod.suno.com/api/generate/v2-web/', {
+                    token: null,
+                    generation_type: 'TEXT',
+                    mv: 'chirp-crow',
+                    prompt: '',
+                    gpt_description_prompt: prompt,
+                    make_instrumental: instrumental || false,
+                    user_uploaded_images_b64: null,
+                    metadata: {
+                        web_client_pathname: '/create',
+                        is_max_mode: false,
+                        is_mumble: false,
+                        create_mode: 'simple',
+                        disable_volume_normalization: false,
+                        can_control_sliders: [],
+                        lyrics_model: 'default'
+                    },
+                    override_fields: [],
+                    cover_clip_id: null,
+                    persona_id: null,
+                    continue_clip_id: null,
+                    transaction_uuid: uuidv4()
+                }, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Origin': 'https://suno.com',
+                        'Referer': 'https://suno.com/'
+                    }
+                });
+
+                console.log('[Suno JWT API] Generate Response:', JSON.stringify(response.data, null, 2));
+
+                // JWT mode returns clip IDs directly
+                if (response.data && response.data.clips) {
+                    const clips = response.data.clips;
+                    return {
+                        success: true,
+                        data: {
+                            data: { taskId: clips[0]?.id || '' },
+                            clips: clips,
+                            authMode: 'cookie'
+                        }
+                    };
                 }
-            });
+                return { success: true, data: response.data };
+            } else {
+                // API Key authentication: Third-party sunoapi.org (existing logic)
+                const apiKey = process.env.SUNO_API_KEY || store.get('sunoApiKey');
+                if (!apiKey) throw new Error('API Key is missing. Please add SUNO_API_KEY to your .env file.');
 
-            console.log('[Suno API] Generate Response:', JSON.stringify(response.data, null, 2));
-            return { success: true, data: response.data };
+                console.log('[Suno] Using API Key authentication mode');
+                const response = await axios.post('https://api.sunoapi.org/api/v1/generate', {
+                    prompt,
+                    customMode: customMode || false,
+                    instrumental: instrumental || false,
+                    style: style || '',
+                    title: title || '',
+                    model: 'V4',
+                    callBackUrl: 'https://pqqpxm.link/suno-callback'
+                }, {
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                console.log('[Suno API] Generate Response:', JSON.stringify(response.data, null, 2));
+                return { success: true, data: response.data };
+            }
         } catch (error) {
             console.error('Suno Generate Error:', error.response?.data || error.message);
             return { success: false, error: error.response?.data || error.message };
         }
     });
 
-    ipcMain.handle('suno:status', async (event, { taskId }) => {
+    ipcMain.handle('suno:status', async (event, { taskId, authMode }) => {
         try {
-            const apiKey = process.env.SUNO_API_KEY || store.get('sunoApiKey');
-            if (!apiKey) throw new Error('API Key is missing');
+            if (authMode === 'cookie') {
+                // JWT Token-based: Query Suno feed API
+                let token = store.get('sunoCookie');
+                if (!token) throw new Error('Token is missing');
 
-            const response = await axios.get(`https://api.sunoapi.org/api/v1/generate/record-info?taskId=${taskId}`, {
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`
+                // Clean the token
+                token = token.trim().replace(/[\r\n]/g, '');
+
+                const response = await axios.get(`https://studio-api.prod.suno.com/api/feed/?ids=${taskId}`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Origin': 'https://suno.com',
+                        'Referer': 'https://suno.com/'
+                    }
+                });
+
+                // Transform response to match existing format
+                if (response.data && response.data.length > 0) {
+                    const clip = response.data[0];
+                    return {
+                        success: true,
+                        data: {
+                            data: {
+                                status: clip.status === 'complete' ? 'SUCCESS' : (clip.status === 'streaming' ? 'PENDING' : clip.status?.toUpperCase()),
+                                response: {
+                                    sunoData: [{
+                                        id: clip.id,
+                                        title: clip.title || 'Untitled',
+                                        audio_url: clip.audio_url,
+                                        image_url: clip.image_url,
+                                        status: clip.status
+                                    }]
+                                }
+                            }
+                        },
+                        authMode: 'cookie'
+                    };
                 }
-            });
+                return { success: true, data: response.data };
+            } else {
+                // API Key mode (existing logic)
+                const apiKey = process.env.SUNO_API_KEY || store.get('sunoApiKey');
+                if (!apiKey) throw new Error('API Key is missing');
 
-            return { success: true, data: response.data };
+                const response = await axios.get(`https://api.sunoapi.org/api/v1/generate/record-info?taskId=${taskId}`, {
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`
+                    }
+                });
+
+                return { success: true, data: response.data };
+            }
         } catch (error) {
             return { success: false, error: error.message };
         }
