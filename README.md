@@ -108,3 +108,29 @@ pip install --user demucs soundfile av torchcodec
 
 powershell
 npm run electron-dev
+
+## 🎫 JWT 토큰 추출 방법 (무료 인증)
+
+Suno AI를 무료로 사용하려면 JWT 토큰이 필요합니다. 아래 스크립트를 사용하면 쉽게 추출할 수 있습니다.
+
+### 사용법:
+1. **[suno.com](https://suno.com)** 로그인
+2. **`F12`** → **Console** 탭 클릭
+3. 아래 코드 붙여넣기 후 **Enter**:
+
+```javascript
+// Suno JWT Token 자동 추출기
+const cookies = document.cookie.split(';');
+const sessionCookie = cookies.find(c => c.trim().startsWith('__session='));
+if (sessionCookie) {
+  const token = sessionCookie.split('=')[1];
+  navigator.clipboard.writeText(token);
+  alert('✅ JWT 토큰이 클립보드에 복사되었습니다!\n\n앱에 붙여넣기(Ctrl+V) 하세요.');
+} else {
+  alert('❌ 토큰을 찾을 수 없습니다. 로그인 상태를 확인하세요.');
+}
+```
+
+4. 앱으로 돌아와서 **`Ctrl+V`** 붙여넣기!
+
+> ⚠️ **주의**: 토큰은 약 1시간 후 만료됩니다. 만료 시 위 과정을 다시 진행하세요.
