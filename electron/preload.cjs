@@ -29,7 +29,8 @@ contextBridge.exposeInMainWorld('electron', {
             'dialog:open-directory',
             'dialog:open-audio',
             'suno:download',
-            'suno:separate'
+            'suno:separate',
+            'suno:extract-token'
         ];
         if (validChannels.includes(channel)) {
             return ipcRenderer.invoke(channel, ...args);

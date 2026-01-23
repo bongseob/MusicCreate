@@ -204,6 +204,65 @@ app.whenReady().then(() => {
         }
     });
 
+    ipcMain.handle('suno:extract-token', async (event) => {
+        return new Promise((resolve) => {
+            console.log('[Main] Starting JWT extraction...');
+
+            const authWindow = new BrowserWindow({
+                width: 500,
+                height: 700,
+                show: true, // Show it so user can login if needed
+                title: "Suno Login / Token Extraction",
+                webPreferences: {
+                    nodeIntegration: false,
+                    contextIsolation: true
+                }
+            });
+
+            authWindow.loadURL('https://suno.com/create');
+
+            // Extraction script to run in the window
+            const extractScript = `
+                (async () => {
+                    try {
+                        if (window.Clerk && window.Clerk.session) {
+                            const token = await window.Clerk.session.getToken();
+                            return { success: true, token };
+                        }
+                        return { success: false, reason: 'NOT_LOGGED_IN' };
+                    } catch (e) {
+                        return { success: false, reason: e.message };
+                    }
+                })()
+            `;
+
+            const checkInterval = setInterval(async () => {
+                if (authWindow.isDestroyed()) {
+                    clearInterval(checkInterval);
+                    resolve({ success: false, error: 'Window closed by user' });
+                    return;
+                }
+
+                try {
+                    const result = await authWindow.webContents.executeJavaScript(extractScript);
+                    console.log('[Main] Extraction probe result:', result);
+                    if (result && result.success && result.token) {
+                        console.log('[Main] JWT Token extracted successfully');
+                        clearInterval(checkInterval);
+                        authWindow.close();
+                        resolve({ success: true, token: result.token });
+                    }
+                } catch (err) {
+                    console.error('[Main] Extraction script error:', err);
+                }
+            }, 2000);
+
+            authWindow.on('closed', () => {
+                clearInterval(checkInterval);
+            });
+        });
+    });
+
     ipcMain.handle('dialog:open-audio', async () => {
         const { filePaths } = await dialog.showOpenDialog({
             properties: ['openFile'],

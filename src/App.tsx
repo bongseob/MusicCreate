@@ -11,6 +11,7 @@ function App() {
   const [tracks, setTracks] = useState<any[]>([])
   const [projectPath, setProjectPath] = useState<string>('')
   const [separateLogs, setSeparateLogs] = useState<{ [key: string]: string[] }>({})
+  const [isExtracting, setIsExtracting] = useState(false)
 
   const [isEnvLoaded, setIsEnvLoaded] = useState(false)
   const [showCookieGuide, setShowCookieGuide] = useState(false)
@@ -73,6 +74,24 @@ function App() {
     setSunoCookie(val)
     // @ts-ignore
     await window.electron.invoke('store:set', 'sunoCookie', val)
+  }
+
+  const handleExtractToken = async () => {
+    setIsExtracting(true)
+    try {
+      // @ts-ignore
+      const result = await window.electron.invoke('suno:extract-token')
+      if (result.success && result.token) {
+        await handleSaveCookie(result.token)
+        alert('JWT 토큰이 성공적으로 추출되었습니다!')
+      } else if (result.error !== 'Window closed by user') {
+        alert(`토큰 추출 실패: ${result.error || 'Suno.com에 로그인되어 있는지 확인해 주세요.'}`)
+      }
+    } catch (error: any) {
+      alert(`에러 발생: ${error.message}`)
+    } finally {
+      setIsExtracting(false)
+    }
   }
 
   const handleAuthModeChange = async (mode: 'api_key' | 'cookie') => {
@@ -365,6 +384,13 @@ function App() {
                     className="p-1.5 bg-surface border border-border rounded-md hover:bg-border transition-colors"
                   >
                     {isApiKeyVisible ? '👁️' : '🙈'}
+                  </button>
+                  <button
+                    onClick={handleExtractToken}
+                    disabled={isExtracting}
+                    className="px-3 py-1.5 bg-accent/20 border border-accent/40 text-accent rounded-md hover:bg-accent/30 transition-colors text-[10px] font-bold disabled:opacity-50"
+                  >
+                    {isExtracting ? '추출 중...' : '자동 추출'}
                   </button>
                 </div>
                 {showCookieGuide && (
